@@ -1,103 +1,131 @@
-name: Build Aseprite for ARM Linux
+name: Build and release Aseprite
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'BuildLog.md'
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'Aseprite tag to build (leave blank for latest release)'
-        required: false
-        default: ''
-
-permissions:
-  contents: read
+env:
+  BUILD_TYPE: Release
 
 jobs:
-  build:
+  fetch-aseprite-info:
+    name: Fetch deps info
+    runs-on: ubuntu-latest
+    outputs:
+      download-link: ${{ steps.aseprite-link.outputs.download-link }}
+      release-tag: ${{ steps.aseprite-link.outputs.release-tag }}
+    steps:
+      - name: Fetch Aseprite release link
+        id: aseprite-link
+        uses: a1393323447/fetch-release@main
+        with:
+            group: aseprite
+            repo: aseprite
+            match: Aseprite-.*?-Source.zip
+
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: fetch-aseprite-info
+    permissions:
+      contents: write
+    outputs:
+      download-link: ${{ needs.fetch-aseprite-info.outputs.download-link }}
+      release-tag: ${{ needs.fetch-aseprite-info.outputs.release-tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ncipollo/release-action@v1.14.0
+        with:
+          tag: ${{ needs.fetch-aseprite-info.outputs.release-tag }}
+          body: Aseprite-${{ needs.fetch-aseprite-info.outputs.release-tag }}
+          skipIfReleaseExists: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  build-aseprite:
+    name: Build Aseprite
+    needs: create-release
+    permissions:
+      contents: write
     runs-on: ubuntu-24.04-arm
     steps:
       - name: Allocate Swap Space
         run: |
-          sudo fallocate -l 10G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=10240
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
+          sudo fallocate -l 10G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=10240 || true
+          sudo chmod 600 /swapfile || true
+          sudo mkswap /swapfile || true
+          sudo swapon /swapfile || true
           free -h
 
-      - name: Install System Dependencies
+      - name: Install Dependencies
+        shell: bash
         run: |
-          sudo apt update
-          sudo apt install -y cmake ninja-build clang lld libc++-dev libc++abi-dev \
-            libx11-dev libxcursor-dev libxi-dev libgl1-mesa-dev libfontconfig1-dev \
-            curl unzip jq
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            libpixman-1-dev libfreetype6-dev libharfbuzz-dev zlib1g-dev \
+            libx11-dev libxcursor-dev libxi-dev libxrandr-dev libgl1-mesa-dev \
+            libfontconfig1-dev clang lld libc++-dev libc++abi-dev ninja-build zip wget
 
-      - name: Resolve Aseprite Version
-        id: resolve_version
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/checkout@v4
+
+      - name: Install Aseprite
+        shell: bash
         run: |
-          if [ -n "${{ github.event.inputs.version }}" ]; then
-            TAG="${{ github.event.inputs.version }}"
-          else
-            TAG=$(curl -sL https://api.github.com/repos/aseprite/aseprite/releases/latest | jq -r .tag_name)
-          fi
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "Selected Aseprite tag: $TAG"
+          git clone --recurse-submodules -j8 https://github.com/aseprite/aseprite --branch ${{ needs.create-release.outputs.release-tag }}
 
-      - name: Checkout Aseprite
-        uses: actions/checkout@v4
-        with:
-          repository: 'aseprite/aseprite'
-          ref: ${{ steps.resolve_version.outputs.tag }}
-          submodules: 'recursive'
-          path: 'aseprite'
-
-      - name: Download and Unpack Precompiled Skia (ARM64)
+      - name: Install Skia
+        working-directory: aseprite
+        shell: bash
         run: |
-          mkdir -p $HOME/deps/skia
-          cd $HOME/deps/skia
-          curl -LO https://github.com/aseprite/skia/releases/download/m102-861e95432f/Skia-Linux-Release-arm64.zip
-          unzip -o Skia-Linux-Release-arm64.zip
-          
-          # Auto-locate libskia.a regardless of whether the zip uses Release or Release-arm64
-          SKIA_LIB_PATH=$(find $HOME/deps/skia -name "libskia.a" | head -n 1)
-          SKIA_LIB_DIR=$(dirname "$SKIA_LIB_PATH")
-          echo "SKIA_LIB_PATH=$SKIA_LIB_PATH" >> "$GITHUB_ENV"
-          echo "SKIA_LIB_DIR=$SKIA_LIB_DIR" >> "$GITHUB_ENV"
+          wget https://github.com/aseprite/skia/releases/download/m124-08a5439a6b/Skia-Linux-Release-arm64.zip
+          unzip Skia-Linux-Release-arm64.zip -d skia
 
-      - name: Configure CMake
+      - name: Generating Makefiles
+        shell: bash
+        working-directory: aseprite
         run: |
-          mkdir -p $GITHUB_WORKSPACE/aseprite/build
-          cd $GITHUB_WORKSPACE/aseprite/build
-          cmake \
-            -DCMAKE_BUILD_TYPE=Release \
+          export enable_ccache=off
+          export laf_backend=skia
+          export enable_scripting=on
+          export skia_arch=arm64
+
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
             -DCMAKE_CXX_FLAGS="-stdlib=libc++" \
             -DCMAKE_EXE_LINKER_FLAGS="-stdlib=libc++ -fuse-ld=lld" \
-            -DLAF_BACKEND=skia \
-            -DSKIA_DIR=$HOME/deps/skia \
-            -DSKIA_LIBRARY_DIR="$SKIA_LIB_DIR" \
-            -DSKIA_LIBRARY="$SKIA_LIB_PATH" \
-            -G Ninja \
-            ..
+            -DENABLE_TESTS=OFF \
+            -DENABLE_SCRIPTING=$enable_scripting \
+            -DENABLE_CCACHE=$enable_ccache \
+            -DLAF_BACKEND=$laf_backend \
+            -DSKIA_DIR=$(realpath skia) \
+            -DOPENSSL_USE_STATIC_LIBS=ON \
+            -DSKIA_LIBRARY_DIR=$(realpath skia/out/Release-$skia_arch)
 
-      - name: Compile Aseprite
+      - name: Compiling
+        shell: bash
+        working-directory: aseprite
         run: |
-          cd $GITHUB_WORKSPACE/aseprite/build
-          ninja -j 2 aseprite
+          cd build && ninja -j 2
 
-      - name: Package Executable and Data
-        run: |
-          BIN_DIR="$GITHUB_WORKSPACE/aseprite/build/bin"
-          DATA_SRC="$GITHUB_WORKSPACE/aseprite/data"
-          
-          # Copy the required data directory alongside the binary
-          cp -r "$DATA_SRC" "$BIN_DIR/data"
-          
-          cd "$BIN_DIR"
-          tar -czvf "aseprite-${{ steps.resolve_version.outputs.tag }}-linux-arm64.tar.gz" aseprite data
+      - name: Clean Up Build folder
+        working-directory: aseprite/build/bin
+        shell: bash
+        run: find . -mindepth 1 ! \( -name 'aseprite' -o -name 'data' -prune \) -exec rm -rf {} +
 
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
+      - name: Make portable zip
+        working-directory: aseprite/build/bin
+        run: echo '# This file is here so Aseprite behaves as a portable program' > aseprite.ini
+
+      - name: Create release zip
+        working-directory: aseprite/build/bin
+        run: zip -r Aseprite-${{ needs.create-release.outputs.release-tag }}-linux-arm64.zip *
+
+      - name: Upload release
+        uses: svenstaro/upload-release-action@v2
         with:
-          name: aseprite-${{ steps.resolve_version.outputs.tag }}-linux-arm64
-          path: aseprite/build/bin/aseprite-*.tar.gz
-          retention-days: 7
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: aseprite/build/bin/Aseprite-${{ needs.create-release.outputs.release-tag }}-linux-arm64.zip
+          asset_name: Aseprite-${{ needs.create-release.outputs.release-tag }}-linux-arm64.zip
+          tag: ${{ needs.create-release.outputs.release-tag }}
