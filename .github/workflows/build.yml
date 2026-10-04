@@ -2,23 +2,36 @@ name: Build Aseprite for ARM Linux
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Aseprite Git Tag'
+        required: true
+        default: 'v1.3.15'
 
 jobs:
   build:
     runs-on: ubuntu-24.04-arm
     steps:
+      - name: Allocate Swap Space
+        run: |
+          sudo fallocate -l 10G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=10240
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          free -h
+
       - name: Checkout Aseprite
         uses: actions/checkout@v4
         with:
           repository: 'aseprite/aseprite'
-          ref: 'main'
+          ref: ${{ github.event.inputs.version }}
           submodules: 'recursive'
           path: 'aseprite'
 
       - name: Install System Dependencies
         run: |
           sudo apt update
-          sudo apt install -y cmake ninja-build clang libc++-dev libc++abi-dev \
+          sudo apt install -y cmake ninja-build clang lld libc++-dev libc++abi-dev \
             libx11-dev libxcursor-dev libxi-dev libgl1-mesa-dev libfontconfig1-dev curl unzip
 
       - name: Download Precompiled ARM64 Skia
@@ -35,7 +48,7 @@ jobs:
           cmake \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CXX_FLAGS="-stdlib=libc++" \
-            -DCMAKE_EXE_LINKER_FLAGS="-stdlib=libc++" \
+            -DCMAKE_EXE_LINKER_FLAGS="-stdlib=libc++ -fuse-ld=lld" \
             -DLAF_BACKEND=skia \
             -DSKIA_DIR=$HOME/deps/skia \
             -DSKIA_LIBRARY_DIR=$HOME/deps/skia/out/Release-arm64 \
