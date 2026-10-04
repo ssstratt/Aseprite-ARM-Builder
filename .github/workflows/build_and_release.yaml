@@ -1,7 +1,15 @@
-# name: Build Aseprite for ARM Linux (Private Artifact)
+name: Build Aseprite for ARM Linux
+
+run-name: Aseprite Build (${{ inputs.build_notes }})
 
 on:
   workflow_dispatch:
+    inputs:
+      build_notes:
+        description: 'Build Label / Notes'
+        required: true
+        default: 'Latest Private Build'
+
 env:
   BUILD_TYPE: Release
 
