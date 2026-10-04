@@ -91,11 +91,13 @@ jobs:
           git clone -b aseprite-m124 https://github.com/aseprite/skia.git
           cd skia
           
-          # Sync dependencies and configure for ARM64
+          # Sync dependencies
           python3 tools/git-sync-deps
-          bin/gn gen out/Release-arm64 --args='is_debug=false is_official_build=true skia_use_system_expat=false skia_use_system_icu=false skia_use_system_libjpeg_turbo=false skia_use_system_libpng=false skia_use_system_libwebp=false skia_use_system_zlib=false skia_use_freetype=true skia_use_system_freetype2=false skia_use_harfbuzz=true skia_use_system_harfbuzz=false skia_pdf_subset_harfbuzz=true skia_use_gl=true skia_use_dng_sdk=false cc="clang" cxx="clang++" target_cpu="arm64"'
           
-          # Compile Skia using the system Ninja instead of the depot_tools wrapper
+          # Configure for ARM64 and explicitly force libc++ to match Aseprite
+          bin/gn gen out/Release-arm64 --args='is_debug=false is_official_build=true skia_use_system_expat=false skia_use_system_icu=false skia_use_system_libjpeg_turbo=false skia_use_system_libpng=false skia_use_system_libwebp=false skia_use_system_zlib=false skia_use_freetype=true skia_use_system_freetype2=false skia_use_harfbuzz=true skia_use_system_harfbuzz=false skia_pdf_subset_harfbuzz=true skia_use_gl=true skia_use_dng_sdk=false cc="clang" cxx="clang++" target_cpu="arm64" extra_cflags=["-stdlib=libc++"] extra_cflags_cc=["-stdlib=libc++"] extra_ldflags=["-stdlib=libc++", "-fuse-ld=lld"]'
+          
+          # Compile Skia using the system Ninja
           /usr/bin/ninja -C out/Release-arm64 skia modules
 
       - name: Generating Makefiles
