@@ -1,4 +1,4 @@
-name: Build and release Aseprite
+name: Build and release Aseprite for ARM Linux
 
 on:
   push:
@@ -66,7 +66,8 @@ jobs:
           sudo apt-get install -y \
             libpixman-1-dev libfreetype6-dev libharfbuzz-dev zlib1g-dev \
             libx11-dev libxcursor-dev libxi-dev libxrandr-dev libgl1-mesa-dev \
-            libfontconfig1-dev clang lld libc++-dev libc++abi-dev ninja-build zip wget
+            libfontconfig1-dev clang lld libc++-dev libc++abi-dev ninja-build \
+            zip python3 git curl
 
       - uses: actions/checkout@v4
 
@@ -75,12 +76,24 @@ jobs:
         run: |
           git clone --recurse-submodules -j8 https://github.com/aseprite/aseprite --branch ${{ needs.create-release.outputs.release-tag }}
 
-      - name: Install Skia
-        working-directory: aseprite
+      - name: Compile Skia from Source for ARM64
+        working-directory: ${{ github.workspace }}
         shell: bash
         run: |
-          wget https://github.com/aseprite/skia/releases/download/m124-08a5439a6b/Skia-Linux-Release-arm64.zip
-          unzip Skia-Linux-Release-arm64.zip -d skia
+          # Fetch Google's build tools
+          git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
+          export PATH="${GITHUB_WORKSPACE}/depot_tools:${PATH}"
+          
+          # Clone Aseprite's Skia fork
+          git clone -b aseprite-m124 https://github.com/aseprite/skia.git
+          cd skia
+          
+          # Sync dependencies and configure for ARM64
+          python3 tools/git-sync-deps
+          bin/gn gen out/Release-arm64 --args='is_debug=false is_official_build=true skia_use_system_expat=false skia_use_system_icu=false skia_use_system_libjpeg_turbo=false skia_use_system_libpng=false skia_use_system_libwebp=false skia_use_system_zlib=false skia_use_sfntly=false skia_use_freetype=true skia_use_system_freetype2=false skia_use_harfbuzz=true skia_use_system_harfbuzz=false skia_pdf_subset_harfbuzz=true skia_use_gl=true skia_use_dng_sdk=false cc="clang" cxx="clang++" target_cpu="arm64"'
+          
+          # Compile Skia
+          ninja -C out/Release-arm64 skia modules
 
       - name: Generating Makefiles
         shell: bash
@@ -99,9 +112,9 @@ jobs:
             -DENABLE_SCRIPTING=$enable_scripting \
             -DENABLE_CCACHE=$enable_ccache \
             -DLAF_BACKEND=$laf_backend \
-            -DSKIA_DIR=$(realpath skia) \
+            -DSKIA_DIR=${GITHUB_WORKSPACE}/skia \
             -DOPENSSL_USE_STATIC_LIBS=ON \
-            -DSKIA_LIBRARY_DIR=$(realpath skia/out/Release-$skia_arch)
+            -DSKIA_LIBRARY_DIR=${GITHUB_WORKSPACE}/skia/out/Release-arm64
 
       - name: Compiling
         shell: bash
