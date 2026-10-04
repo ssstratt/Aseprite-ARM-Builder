@@ -1,7 +1,15 @@
-name: Build Latest Aseprite for ARM Linux
+name: Build Aseprite for ARM Linux
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Aseprite tag to build (leave blank for latest release)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -15,48 +23,59 @@ jobs:
           sudo swapon /swapfile
           free -h
 
-      - name: Fetch Latest Aseprite Release Tag
-        id: get_tag
+      - name: Install System Dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y cmake ninja-build clang lld libc++-dev libc++abi-dev \
+            libx11-dev libxcursor-dev libxi-dev libgl1-mesa-dev libfontconfig1-dev \
+            curl unzip jq
+
+      - name: Resolve Aseprite Version
+        id: resolve_version
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          LATEST_TAG=$(gh api repos/aseprite/aseprite/releases/latest --jq .tag_name)
-          echo "tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
-          echo "Found latest version: $LATEST_TAG"
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            TAG="${{ github.event.inputs.version }}"
+          else
+            TAG=$(curl -sL https://api.github.com/repos/aseprite/aseprite/releases/latest | jq -r .tag_name)
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Selected Aseprite tag: $TAG"
 
       - name: Checkout Aseprite
         uses: actions/checkout@v4
         with:
           repository: 'aseprite/aseprite'
-          ref: ${{ steps.get_tag.outputs.tag }}
+          ref: ${{ steps.resolve_version.outputs.tag }}
           submodules: 'recursive'
           path: 'aseprite'
 
-      - name: Install System Dependencies
-        run: |
-          sudo apt update
-          sudo apt install -y cmake ninja-build clang lld libc++-dev libc++abi-dev \
-            libx11-dev libxcursor-dev libxi-dev libgl1-mesa-dev libfontconfig1-dev curl unzip
-
-      - name: Download Precompiled ARM64 Skia
+      - name: Download and Unpack Precompiled Skia (ARM64)
         run: |
           mkdir -p $HOME/deps/skia
           cd $HOME/deps/skia
           curl -LO https://github.com/aseprite/skia/releases/download/m102-861e95432f/Skia-Linux-Release-arm64.zip
-          unzip Skia-Linux-Release-arm64.zip
+          unzip -o Skia-Linux-Release-arm64.zip
+          
+          # Auto-locate libskia.a regardless of whether the zip uses Release or Release-arm64
+          SKIA_LIB_PATH=$(find $HOME/deps/skia -name "libskia.a" | head -n 1)
+          SKIA_LIB_DIR=$(dirname "$SKIA_LIB_PATH")
+          echo "SKIA_LIB_PATH=$SKIA_LIB_PATH" >> "$GITHUB_ENV"
+          echo "SKIA_LIB_DIR=$SKIA_LIB_DIR" >> "$GITHUB_ENV"
 
       - name: Configure CMake
         run: |
-          cd $GITHUB_WORKSPACE/aseprite
-          mkdir build && cd build
+          mkdir -p $GITHUB_WORKSPACE/aseprite/build
+          cd $GITHUB_WORKSPACE/aseprite/build
           cmake \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CXX_FLAGS="-stdlib=libc++" \
             -DCMAKE_EXE_LINKER_FLAGS="-stdlib=libc++ -fuse-ld=lld" \
             -DLAF_BACKEND=skia \
             -DSKIA_DIR=$HOME/deps/skia \
-            -DSKIA_LIBRARY_DIR=$HOME/deps/skia/out/Release-arm64 \
-            -DSKIA_LIBRARY=$HOME/deps/skia/out/Release-arm64/libskia.a \
+            -DSKIA_LIBRARY_DIR="$SKIA_LIB_DIR" \
+            -DSKIA_LIBRARY="$SKIA_LIB_PATH" \
             -G Ninja \
             ..
 
@@ -65,14 +84,20 @@ jobs:
           cd $GITHUB_WORKSPACE/aseprite/build
           ninja -j 2 aseprite
 
-      - name: Bundle Executable & Data
+      - name: Package Executable and Data
         run: |
-          cd $GITHUB_WORKSPACE/aseprite/build/bin
-          tar -czvf aseprite-${{ steps.get_tag.outputs.tag }}-arm64.tar.gz aseprite data/
+          BIN_DIR="$GITHUB_WORKSPACE/aseprite/build/bin"
+          DATA_SRC="$GITHUB_WORKSPACE/aseprite/data"
+          
+          # Copy the required data directory alongside the binary
+          cp -r "$DATA_SRC" "$BIN_DIR/data"
+          
+          cd "$BIN_DIR"
+          tar -czvf "aseprite-${{ steps.resolve_version.outputs.tag }}-linux-arm64.tar.gz" aseprite data
 
-      - name: Upload Build Artifact
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: aseprite-${{ steps.get_tag.outputs.tag }}-arm64-linux
+          name: aseprite-${{ steps.resolve_version.outputs.tag }}-linux-arm64
           path: aseprite/build/bin/aseprite-*.tar.gz
           retention-days: 7
