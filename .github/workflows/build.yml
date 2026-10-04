@@ -1,12 +1,7 @@
-name: Build Aseprite for ARM Linux
+name: Build Latest Aseprite for ARM Linux
 
 on:
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'Aseprite Git Tag'
-        required: true
-        default: 'v1.3.15'
 
 jobs:
   build:
@@ -20,11 +15,20 @@ jobs:
           sudo swapon /swapfile
           free -h
 
+      - name: Fetch Latest Aseprite Release Tag
+        id: get_tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          LATEST_TAG=$(gh api repos/aseprite/aseprite/releases/latest --jq .tag_name)
+          echo "tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
+          echo "Found latest version: $LATEST_TAG"
+
       - name: Checkout Aseprite
         uses: actions/checkout@v4
         with:
           repository: 'aseprite/aseprite'
-          ref: ${{ github.event.inputs.version }}
+          ref: ${{ steps.get_tag.outputs.tag }}
           submodules: 'recursive'
           path: 'aseprite'
 
@@ -64,11 +68,11 @@ jobs:
       - name: Bundle Executable & Data
         run: |
           cd $GITHUB_WORKSPACE/aseprite/build/bin
-          tar -czvf aseprite-arm64.tar.gz aseprite data/
+          tar -czvf aseprite-${{ steps.get_tag.outputs.tag }}-arm64.tar.gz aseprite data/
 
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: aseprite-arm64-linux
-          path: aseprite/build/bin/aseprite-arm64.tar.gz
+          name: aseprite-${{ steps.get_tag.outputs.tag }}-arm64-linux
+          path: aseprite/build/bin/aseprite-*.tar.gz
           retention-days: 7
