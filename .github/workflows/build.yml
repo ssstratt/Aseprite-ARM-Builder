@@ -1,11 +1,11 @@
 name: Build Aseprite for ARM Linux
 
 on:
-  workflow_dispatch: # Allows manual trigger from the Actions tab
+  workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04-arm # Runs on native GitHub ARM64 hardware
+    runs-on: ubuntu-24.04-arm
     steps:
       - name: Checkout Aseprite
         uses: actions/checkout@v4
@@ -33,7 +33,7 @@ jobs:
           cd $GITHUB_WORKSPACE/aseprite
           mkdir build && cd build
           cmake \
-            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CXX_FLAGS="-stdlib=libc++" \
             -DCMAKE_EXE_LINKER_FLAGS="-stdlib=libc++" \
             -DLAF_BACKEND=skia \
@@ -46,7 +46,7 @@ jobs:
       - name: Compile Aseprite
         run: |
           cd $GITHUB_WORKSPACE/aseprite/build
-          ninja aseprite
+          ninja -j 2 aseprite
 
       - name: Bundle Executable & Data
         run: |
