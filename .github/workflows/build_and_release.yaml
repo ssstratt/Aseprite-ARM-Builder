@@ -118,17 +118,13 @@ jobs:
         shell: bash
         run: find . -mindepth 1 ! \( -name 'aseprite' -o -name 'data' -prune \) -exec rm -rf {} +
 
-      - name: Make portable zip
+      - name: Make portable ini
         working-directory: aseprite/build/bin
         run: echo '# This file is here so Aseprite behaves as a portable program' > aseprite.ini
 
-      - name: Create Artifact Zip
-        working-directory: aseprite/build/bin
-        run: zip -r Aseprite-${{ needs.fetch-aseprite-info.outputs.release-tag }}-linux-arm64.zip *
-
-      - name: Upload Build Artifact
+      - name: Upload Clean Build Artifact
         uses: actions/upload-artifact@v4
         with:
           name: Aseprite-${{ needs.fetch-aseprite-info.outputs.release-tag }}-linux-arm64
-          path: aseprite/build/bin/Aseprite-*.zip
+          path: aseprite/build/bin/
           retention-days: 7
