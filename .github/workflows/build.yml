@@ -1,0 +1,61 @@
+name: Build Aseprite for ARM Linux
+
+on:
+  workflow_dispatch: # Allows manual trigger from the Actions tab
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm # Runs on native GitHub ARM64 hardware
+    steps:
+      - name: Checkout Aseprite
+        uses: actions/checkout@v4
+        with:
+          repository: 'aseprite/aseprite'
+          ref: 'main'
+          submodules: 'recursive'
+          path: 'aseprite'
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y cmake ninja-build clang libc++-dev libc++abi-dev \
+            libx11-dev libxcursor-dev libxi-dev libgl1-mesa-dev libfontconfig1-dev curl unzip
+
+      - name: Download Precompiled ARM64 Skia
+        run: |
+          mkdir -p $HOME/deps/skia
+          cd $HOME/deps/skia
+          curl -LO https://github.com/aseprite/skia/releases/download/m102-861e95432f/Skia-Linux-Release-arm64.zip
+          unzip Skia-Linux-Release-arm64.zip
+
+      - name: Configure CMake
+        run: |
+          cd $GITHUB_WORKSPACE/aseprite
+          mkdir build && cd build
+          cmake \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_CXX_FLAGS="-stdlib=libc++" \
+            -DCMAKE_EXE_LINKER_FLAGS="-stdlib=libc++" \
+            -DLAF_BACKEND=skia \
+            -DSKIA_DIR=$HOME/deps/skia \
+            -DSKIA_LIBRARY_DIR=$HOME/deps/skia/out/Release-arm64 \
+            -DSKIA_LIBRARY=$HOME/deps/skia/out/Release-arm64/libskia.a \
+            -G Ninja \
+            ..
+
+      - name: Compile Aseprite
+        run: |
+          cd $GITHUB_WORKSPACE/aseprite/build
+          ninja aseprite
+
+      - name: Bundle Executable & Data
+        run: |
+          cd $GITHUB_WORKSPACE/aseprite/build/bin
+          tar -czvf aseprite-arm64.tar.gz aseprite data/
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aseprite-arm64-linux
+          path: aseprite/build/bin/aseprite-arm64.tar.gz
+          retention-days: 7
